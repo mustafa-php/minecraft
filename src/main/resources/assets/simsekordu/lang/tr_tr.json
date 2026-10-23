@@ -1,7 +1,20 @@
 {
   "entity.simsekordu.simsek_npc": "Şimşek Askeri",
+  "entity.simsekordu.simsek_npc.label": "[%1$s] %2$s - Sv.%3$d",
   "item.simsekordu.simsek_npc_spawn_egg": "Şimşek Askeri Yumurtası",
   "message.simsekordu.owner_set": "Bu asker artık seni takip ediyor.",
   "message.simsekordu.already_yours": "Bu asker zaten seni takip ediyor.",
-  "message.simsekordu.owned_by_other": "Bu asker başka bir oyuncuya ait."
+  "message.simsekordu.owned_by_other": "Bu asker başka bir oyuncuya ait.",
+  "message.simsekordu.rank_up": "%1$s %2$s rütbesine yükseldi!",
+  "rank.simsekordu.er": "Er",
+  "rank.simsekordu.onbasi": "Onbaşı",
+  "rank.simsekordu.cavus": "Çavuş",
+  "rank.simsekordu.tegmen": "Teğmen",
+  "rank.simsekordu.yuzbasi": "Yüzbaşı",
+  "job.simsekordu.none": "Yok",
+  "job.simsekordu.miner": "Madenci",
+  "job.simsekordu.hunter": "Avcı",
+  "job.simsekordu.soldier": "Asker",
+  "commands.simsekordu.xp.success": "%2$s adlı askere %1$s XP verildi",
+  "commands.simsekordu.xp.no_target": "Bir Şimşek askerine bakmıyorsun"
 }

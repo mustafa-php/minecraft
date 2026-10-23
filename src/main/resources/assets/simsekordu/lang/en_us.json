@@ -1,7 +1,20 @@
 {
   "entity.simsekordu.simsek_npc": "Simsek Soldier",
+  "entity.simsekordu.simsek_npc.label": "[%1$s] %2$s - Lv.%3$d",
   "item.simsekordu.simsek_npc_spawn_egg": "Simsek Soldier Spawn Egg",
   "message.simsekordu.owner_set": "This soldier now follows you.",
   "message.simsekordu.already_yours": "This soldier already follows you.",
-  "message.simsekordu.owned_by_other": "This soldier belongs to another player."
+  "message.simsekordu.owned_by_other": "This soldier belongs to another player.",
+  "message.simsekordu.rank_up": "%1$s was promoted to %2$s!",
+  "rank.simsekordu.er": "Private",
+  "rank.simsekordu.onbasi": "Corporal",
+  "rank.simsekordu.cavus": "Sergeant",
+  "rank.simsekordu.tegmen": "Lieutenant",
+  "rank.simsekordu.yuzbasi": "Captain",
+  "job.simsekordu.none": "None",
+  "job.simsekordu.miner": "Miner",
+  "job.simsekordu.hunter": "Hunter",
+  "job.simsekordu.soldier": "Soldier",
+  "commands.simsekordu.xp.success": "Gave %1$s XP to %2$s",
+  "commands.simsekordu.xp.no_target": "You are not looking at a Simsek soldier"
 }
