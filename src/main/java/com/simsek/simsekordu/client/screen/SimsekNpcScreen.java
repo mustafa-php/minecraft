@@ -2,6 +2,7 @@ package com.simsek.simsekordu.client.screen;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.simsek.simsekordu.data.Job;
+import com.simsek.simsekordu.data.MiningRegion;
 import com.simsek.simsekordu.data.Rank;
 import com.simsek.simsekordu.entity.SimsekNpc;
 import com.simsek.simsekordu.menu.SimsekNpcMenu;
@@ -13,6 +14,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.core.BlockPos;
 import net.minecraft.locale.Language;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -33,6 +35,13 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
     private static final int TEXT_COLOR = 0x404040;
     private static final int PAD = 6;
     private static final int CONTENT_WIDTH = SimsekNpcMenu.PANEL_WIDTH - 2 * PAD;
+    /** Both tabs share the same top edge; the info tab is taller to fit the mining task section. */
+    private static final int INFO_HEIGHT = 212;
+    private static final int INVENTORY_HEIGHT = 166;
+    /** Space kept above the panel for the tab buttons, also on small windows. */
+    private static final int TAB_SPACE = 24;
+    /** Second text column of the info tab (job, task status). */
+    private static final int RIGHT_COLUMN_X = 96;
 
     private Tab tab = Tab.INFO;
     private Button infoTabButton;
@@ -42,16 +51,20 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
     private Button waitButton;
     private EditBox nameBox;
     private Button renameButton;
+    private Button cancelTaskButton;
 
     public SimsekNpcScreen(SimsekNpcMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
         this.imageWidth = SimsekNpcMenu.PANEL_WIDTH;
-        this.imageHeight = 166;
+        this.imageHeight = INFO_HEIGHT;
     }
 
     @Override
     protected void init() {
+        // Centre using the taller info panel so that switching tabs does not move the top edge.
+        this.imageHeight = INFO_HEIGHT;
         super.init();
+        this.topPos = Math.max(this.topPos, TAB_SPACE);
         SimsekNpc npc = this.menu.getNpc();
         if (npc == null) {
             onClose();
@@ -68,25 +81,29 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
         for (Job job : Job.values()) {
             Button button = Button.builder(Component.translatable(job.getTranslationKey()),
                     b -> PacketDistributor.sendToServer(new SimsekNpcPayloads.SetJobPayload(npc.getId(), job.ordinal())))
-                    .bounds(x, this.topPos + 88, 46, 18).build();
+                    .bounds(x, this.topPos + 82, 46, 18).build();
             this.jobButtons.put(job, addRenderableWidget(button));
             x += 47;
         }
 
         this.followButton = addRenderableWidget(Button.builder(Component.translatable("gui.simsekordu.command.follow"),
                 b -> PacketDistributor.sendToServer(new SimsekNpcPayloads.SetWaitingPayload(npc.getId(), false)))
-                .bounds(this.leftPos + PAD, this.topPos + 112, 92, 18).build());
+                .bounds(this.leftPos + PAD, this.topPos + 104, 92, 18).build());
         this.waitButton = addRenderableWidget(Button.builder(Component.translatable("gui.simsekordu.command.wait"),
                 b -> PacketDistributor.sendToServer(new SimsekNpcPayloads.SetWaitingPayload(npc.getId(), true)))
-                .bounds(this.leftPos + PAD + 96, this.topPos + 112, 92, 18).build());
+                .bounds(this.leftPos + PAD + 96, this.topPos + 104, 92, 18).build());
 
-        this.nameBox = new EditBox(this.font, this.leftPos + PAD, this.topPos + 138, 110, 16,
+        this.nameBox = new EditBox(this.font, this.leftPos + PAD, this.topPos + 127, 110, 16,
                 Component.translatable("gui.simsekordu.rename"));
         this.nameBox.setMaxLength(SimsekNpcPayloads.MAX_NAME_LENGTH);
         this.nameBox.setValue(npc.getNpcName());
         addRenderableWidget(this.nameBox);
         this.renameButton = addRenderableWidget(Button.builder(Component.translatable("gui.simsekordu.rename"),
-                b -> submitRename()).bounds(this.leftPos + PAD + 112, this.topPos + 137, 76, 18).build());
+                b -> submitRename()).bounds(this.leftPos + PAD + 112, this.topPos + 126, 76, 18).build());
+
+        this.cancelTaskButton = addRenderableWidget(Button.builder(Component.translatable("gui.simsekordu.task.cancel"),
+                b -> PacketDistributor.sendToServer(new SimsekNpcPayloads.CancelTaskPayload(npc.getId())))
+                .bounds(this.leftPos + PAD, this.topPos + 187, CONTENT_WIDTH, 18).build());
 
         setTab(this.tab);
         updateButtonStates();
@@ -104,12 +121,14 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
     private void setTab(Tab newTab) {
         this.tab = newTab;
         boolean info = newTab == Tab.INFO;
+        this.imageHeight = info ? INFO_HEIGHT : INVENTORY_HEIGHT;
         this.menu.setInventoryTabActive(!info);
         setFocused(null);
         this.jobButtons.values().forEach(button -> button.visible = info);
         this.followButton.visible = info;
         this.waitButton.visible = info;
         this.renameButton.visible = info;
+        this.cancelTaskButton.visible = info;
         this.nameBox.visible = info;
         this.nameBox.setFocused(false);
         updateButtonStates();
@@ -125,6 +144,7 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
         this.jobButtons.forEach((job, button) -> button.active = npc.getJob() != job);
         this.followButton.active = npc.isWaiting();
         this.waitButton.active = !npc.isWaiting();
+        this.cancelTaskButton.active = npc.getMiningRegion() != null;
     }
 
     private void submitRename() {
@@ -187,7 +207,7 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
             return;
         }
         int labelX = this.tab == Tab.INVENTORY ? SimsekNpcMenu.SLOT_X - 1 : PAD;
-        drawFitted(graphics, npc.getName(), labelX, 6);
+        drawFitted(graphics, npc.getName(), labelX, 6, CONTENT_WIDTH);
         if (this.tab == Tab.INVENTORY) {
             graphics.drawString(this.font, Component.translatable("gui.simsekordu.inventory"), labelX, 18, TEXT_COLOR, false);
             graphics.drawString(this.font, this.playerInventoryTitle, labelX, SimsekNpcMenu.PLAYER_INV_Y - 12, TEXT_COLOR, false);
@@ -200,27 +220,59 @@ public class SimsekNpcScreen extends AbstractContainerScreen<SimsekNpcMenu> {
         int xp = npc.getXp();
         int xpNeeded = SimsekNpc.xpForNextLevel(npc.getNpcLevel());
 
-        drawFitted(graphics, Component.translatable("gui.simsekordu.health", health, maxHealth), PAD, 18);
-        drawFitted(graphics, Component.translatable("gui.simsekordu.xp", xp, xpNeeded), PAD, 30);
-        drawXpBar(graphics, PAD, 41, CONTENT_WIDTH, 6, xpNeeded > 0 ? (float) xp / xpNeeded : 0.0F);
+        drawFitted(graphics, Component.translatable("gui.simsekordu.health", health, maxHealth), PAD, 18, RIGHT_COLUMN_X - PAD - 4);
+        drawFitted(graphics, Component.translatable("gui.simsekordu.job", Component.translatable(npc.getJob().getTranslationKey())),
+                RIGHT_COLUMN_X, 18, rightColumnWidth());
+        drawFitted(graphics, Component.translatable("gui.simsekordu.xp", xp, xpNeeded), PAD, 29, CONTENT_WIDTH);
+        drawXpBar(graphics, PAD, 40, CONTENT_WIDTH, 6, xpNeeded > 0 ? (float) xp / xpNeeded : 0.0F);
 
         drawFitted(graphics, Component.translatable("gui.simsekordu.bonuses.title",
-                Component.translatable(rank.getTranslationKey())), PAD, 52);
-        drawFitted(graphics, Component.translatable("gui.simsekordu.bonuses.line",
-                percentBonus(rank.getMaxHealthMultiplier()),
-                percentBonus(rank.getAttackDamageMultiplier()),
-                percentBonus(rank.getMovementSpeedMultiplier())), PAD, 63);
+                Component.translatable(rank.getTranslationKey())), PAD, 50, CONTENT_WIDTH);
+        drawFitted(graphics, Component.translatable("gui.simsekordu.bonuses.line1",
+                percentBonus(rank.getMaxHealthMultiplier()), percentBonus(rank.getAttackDamageMultiplier())), PAD, 60, CONTENT_WIDTH);
+        drawFitted(graphics, Component.translatable("gui.simsekordu.bonuses.line2",
+                percentBonus(rank.getMovementSpeedMultiplier()), percentBonus(rank.getMiningSpeedMultiplier())), PAD, 70, CONTENT_WIDTH);
 
-        drawFitted(graphics, Component.translatable("gui.simsekordu.job", Component.translatable(npc.getJob().getTranslationKey())), PAD, 77);
+        drawTaskSection(graphics, npc);
+    }
+
+    private void drawTaskSection(GuiGraphics graphics, SimsekNpc npc) {
+        graphics.fill(PAD, 147, PAD + CONTENT_WIDTH, 148, 0xFF8B8B8B);
+        graphics.fill(PAD, 148, PAD + CONTENT_WIDTH, 149, 0xFFFFFFFF);
+
+        MiningRegion region = npc.getMiningRegion();
+        BlockPos storage = npc.getStoragePos();
+        if (region == null) {
+            drawFitted(graphics, Component.translatable("gui.simsekordu.task.region.none"), PAD, 153, CONTENT_WIDTH);
+            drawFitted(graphics, Component.translatable("gui.simsekordu.task.remaining", "-"), PAD, 164, RIGHT_COLUMN_X - PAD - 4);
+        } else {
+            drawFitted(graphics, Component.translatable("gui.simsekordu.task.region", coords(region.min()), coords(region.max())),
+                    PAD, 153, CONTENT_WIDTH);
+            drawFitted(graphics, Component.translatable("gui.simsekordu.task.remaining", npc.getMiningRemaining()),
+                    PAD, 164, RIGHT_COLUMN_X - PAD - 4);
+        }
+        Component status = region == null ? Component.literal("-") : Component.translatable(npc.getMiningStatus().getTranslationKey());
+        drawFitted(graphics, Component.translatable("gui.simsekordu.task.status", status), RIGHT_COLUMN_X, 164, rightColumnWidth());
+        drawFitted(graphics, storage == null
+                ? Component.translatable("gui.simsekordu.task.storage.none")
+                : Component.translatable("gui.simsekordu.task.storage", coords(storage).replace(",", ", ")), PAD, 175, CONTENT_WIDTH);
+    }
+
+    private static String coords(BlockPos pos) {
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    }
+
+    private static int rightColumnWidth() {
+        return SimsekNpcMenu.PANEL_WIDTH - PAD - RIGHT_COLUMN_X;
     }
 
     private static int percentBonus(double multiplier) {
         return (int) Math.round((multiplier - 1.0D) * 100.0D);
     }
 
-    private void drawFitted(GuiGraphics graphics, Component text, int x, int y) {
+    private void drawFitted(GuiGraphics graphics, Component text, int x, int y, int maxWidth) {
         graphics.drawString(this.font,
-                Language.getInstance().getVisualOrder(this.font.substrByWidth(text, CONTENT_WIDTH)),
+                Language.getInstance().getVisualOrder(this.font.substrByWidth(text, maxWidth)),
                 x, y, TEXT_COLOR, false);
     }
 
