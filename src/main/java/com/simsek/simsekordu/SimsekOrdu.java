@@ -1,6 +1,7 @@
 package com.simsek.simsekordu;
 
 import com.simsek.simsekordu.entity.SimsekNpc;
+import com.simsek.simsekordu.registry.ModDataComponents;
 import com.simsek.simsekordu.registry.ModEntities;
 import com.simsek.simsekordu.registry.ModItems;
 import com.simsek.simsekordu.registry.ModMenus;
@@ -15,6 +16,7 @@ public class SimsekOrdu {
     public static final String MODID = "simsekordu";
 
     public SimsekOrdu(IEventBus modEventBus) {
+        ModDataComponents.DATA_COMPONENTS.register(modEventBus);
         ModEntities.ENTITY_TYPES.register(modEventBus);
         ModItems.ITEMS.register(modEventBus);
         ModMenus.MENU_TYPES.register(modEventBus);
@@ -30,6 +32,8 @@ public class SimsekOrdu {
     private void addCreativeTabContents(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.SPAWN_EGGS) {
             event.accept(ModItems.SIMSEK_NPC_SPAWN_EGG);
+        } else if (event.getTabKey() == CreativeModeTabs.TOOLS_AND_UTILITIES) {
+            event.accept(ModItems.COMMANDER_WAND);
         }
     }
 }

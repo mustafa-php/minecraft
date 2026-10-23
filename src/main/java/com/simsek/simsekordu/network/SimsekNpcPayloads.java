@@ -30,7 +30,8 @@ public final class SimsekNpcPayloads {
         event.registrar(NETWORK_VERSION)
                 .playToServer(SetJobPayload.TYPE, SetJobPayload.STREAM_CODEC, SimsekNpcPayloads::handleSetJob)
                 .playToServer(SetWaitingPayload.TYPE, SetWaitingPayload.STREAM_CODEC, SimsekNpcPayloads::handleSetWaiting)
-                .playToServer(RenamePayload.TYPE, RenamePayload.STREAM_CODEC, SimsekNpcPayloads::handleRename);
+                .playToServer(RenamePayload.TYPE, RenamePayload.STREAM_CODEC, SimsekNpcPayloads::handleRename)
+                .playToServer(CancelTaskPayload.TYPE, CancelTaskPayload.STREAM_CODEC, SimsekNpcPayloads::handleCancelTask);
     }
 
     /** Returns the NPC if {@code player} owns it and is within menu range, otherwise null. */
@@ -68,6 +69,13 @@ public final class SimsekNpcPayloads {
         String name = sanitizeName(payload.name());
         if (!name.isEmpty()) {
             npc.setNpcName(name);
+        }
+    }
+
+    private static void handleCancelTask(CancelTaskPayload payload, IPayloadContext context) {
+        SimsekNpc npc = findControlledNpc(context.player(), payload.entityId());
+        if (npc != null) {
+            npc.cancelMiningTask();
         }
     }
 
@@ -118,6 +126,18 @@ public final class SimsekNpcPayloads {
                 ByteBufCodecs.VAR_INT, RenamePayload::entityId,
                 ByteBufCodecs.stringUtf8(MAX_NAME_LENGTH), RenamePayload::name,
                 RenamePayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record CancelTaskPayload(int entityId) implements CustomPacketPayload {
+        public static final Type<CancelTaskPayload> TYPE = new Type<>(id("cancel_task"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, CancelTaskPayload> STREAM_CODEC = StreamCodec.composite(
+                ByteBufCodecs.VAR_INT, CancelTaskPayload::entityId,
+                CancelTaskPayload::new);
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
