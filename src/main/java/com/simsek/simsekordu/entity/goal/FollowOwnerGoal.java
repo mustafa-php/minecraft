@@ -23,6 +23,9 @@ public class FollowOwnerGoal extends Goal {
 
     @Override
     public boolean canUse() {
+        if (this.npc.isHeldInPlace()) {
+            return false;
+        }
         Player player = this.npc.getOwner();
         if (player == null || player.isSpectator() || this.npc.distanceToSqr(player) < this.startDistanceSqr) {
             return false;
@@ -33,7 +36,8 @@ public class FollowOwnerGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
-        return this.owner.isAlive()
+        return !this.npc.isHeldInPlace()
+                && this.owner.isAlive()
                 && !this.owner.isSpectator()
                 && !this.npc.getNavigation().isDone()
                 && this.npc.distanceToSqr(this.owner) > this.stopDistanceSqr;

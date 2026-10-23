@@ -43,8 +43,10 @@ public class SimsekCommands {
             return 0;
         }
 
+        // Capture the name before the XP is applied: it may change (level, rank) as a result.
+        Component nameBefore = npc.getDisplayName();
+        source.sendSuccess(() -> Component.translatable("commands.simsekordu.xp.success", amount, nameBefore), true);
         npc.addXp(amount);
-        source.sendSuccess(() -> Component.translatable("commands.simsekordu.xp.success", amount, npc.getDisplayName()), true);
         return amount;
     }
 

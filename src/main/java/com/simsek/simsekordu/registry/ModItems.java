@@ -11,5 +11,5 @@ public class ModItems {
 
     public static final DeferredItem<DeferredSpawnEggItem> SIMSEK_NPC_SPAWN_EGG =
             ITEMS.register("simsek_npc_spawn_egg", () -> new DeferredSpawnEggItem(
-                    ModEntities.SIMSEK_NPC, 0x4B5320, 0xC9A227, new Item.Properties()));
+                    ModEntities.SIMSEK_NPC, 0x556B2F, 0x7B4A2B, new Item.Properties()));
 }

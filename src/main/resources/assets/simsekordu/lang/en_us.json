@@ -3,8 +3,7 @@
   "entity.simsekordu.simsek_npc.label": "[%1$s] %2$s - Lv.%3$d",
   "item.simsekordu.simsek_npc_spawn_egg": "Simsek Soldier Spawn Egg",
   "message.simsekordu.owner_set": "This soldier now follows you.",
-  "message.simsekordu.already_yours": "This soldier already follows you.",
-  "message.simsekordu.owned_by_other": "This soldier belongs to another player.",
+  "message.simsekordu.owned_by_other": "This soldier does not belong to you.",
   "message.simsekordu.rank_up": "%1$s was promoted to %2$s!",
   "rank.simsekordu.er": "Private",
   "rank.simsekordu.onbasi": "Corporal",
@@ -16,5 +15,16 @@
   "job.simsekordu.hunter": "Hunter",
   "job.simsekordu.soldier": "Soldier",
   "commands.simsekordu.xp.success": "Gave %1$s XP to %2$s",
-  "commands.simsekordu.xp.no_target": "You are not looking at a Simsek soldier"
+  "commands.simsekordu.xp.no_target": "You are not looking at a Simsek soldier",
+  "gui.simsekordu.tab.info": "Info",
+  "gui.simsekordu.tab.inventory": "Inventory",
+  "gui.simsekordu.inventory": "Soldier inventory",
+  "gui.simsekordu.health": "Health: %1$s / %2$s",
+  "gui.simsekordu.xp": "XP: %1$s / %2$s",
+  "gui.simsekordu.job": "Job: %1$s",
+  "gui.simsekordu.bonuses.title": "Rank bonuses (%1$s)",
+  "gui.simsekordu.bonuses.line": "HP +%%%1$s  DMG +%%%2$s  SPD +%%%3$s",
+  "gui.simsekordu.command.follow": "Follow",
+  "gui.simsekordu.command.wait": "Wait here",
+  "gui.simsekordu.rename": "Rename"
 }
