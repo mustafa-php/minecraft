@@ -3,6 +3,7 @@ package com.simsek.simsekordu;
 import com.simsek.simsekordu.entity.SimsekNpc;
 import com.simsek.simsekordu.registry.ModEntities;
 import com.simsek.simsekordu.registry.ModItems;
+import com.simsek.simsekordu.registry.ModMenus;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
@@ -16,6 +17,7 @@ public class SimsekOrdu {
     public SimsekOrdu(IEventBus modEventBus) {
         ModEntities.ENTITY_TYPES.register(modEventBus);
         ModItems.ITEMS.register(modEventBus);
+        ModMenus.MENU_TYPES.register(modEventBus);
 
         modEventBus.addListener(this::registerAttributes);
         modEventBus.addListener(this::addCreativeTabContents);

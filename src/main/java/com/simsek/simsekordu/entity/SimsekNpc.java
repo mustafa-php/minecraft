@@ -5,6 +5,8 @@ import com.simsek.simsekordu.data.Job;
 import com.simsek.simsekordu.data.NpcNames;
 import com.simsek.simsekordu.data.Rank;
 import com.simsek.simsekordu.entity.goal.FollowOwnerGoal;
+import com.simsek.simsekordu.menu.SimsekNpcMenu;
+import java.util.Optional;
 import java.util.UUID;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
@@ -17,6 +19,10 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.ContainerHelper;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.SimpleMenuProvider;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.DifficultyInstance;
@@ -45,6 +51,10 @@ public class SimsekNpc extends PathfinderMob {
     private static final String TAG_LEVEL = "Level";
     private static final String TAG_XP = "Xp";
     private static final String TAG_NPC_NAME = "NpcName";
+    private static final String TAG_WAITING = "Waiting";
+    private static final String TAG_INVENTORY = "Inventory";
+
+    public static final int INVENTORY_SIZE = 9;
 
     private static final ResourceLocation RANK_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath(SimsekOrdu.MODID, "rank_bonus");
 
@@ -58,9 +68,14 @@ public class SimsekNpc extends PathfinderMob {
             SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<String> DATA_NPC_NAME =
             SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.STRING);
+    private static final EntityDataAccessor<Optional<UUID>> DATA_OWNER =
+            SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.OPTIONAL_UUID);
+    private static final EntityDataAccessor<Boolean> DATA_WAITING =
+            SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.BOOLEAN);
 
-    @Nullable
-    private UUID ownerUuid;
+    private final SimpleContainer inventory = new SimpleContainer(INVENTORY_SIZE);
+    /** Number of players that currently have this NPC's menu open (server side only). */
+    private int menuUsers;
 
     public SimsekNpc(EntityType<? extends SimsekNpc> type, Level level) {
         super(type, level);
@@ -82,6 +97,8 @@ public class SimsekNpc extends PathfinderMob {
         builder.define(DATA_XP, 0);
         builder.define(DATA_RANK, Rank.ER.ordinal());
         builder.define(DATA_NPC_NAME, "");
+        builder.define(DATA_OWNER, Optional.empty());
+        builder.define(DATA_WAITING, false);
     }
 
     @Override
@@ -98,7 +115,17 @@ public class SimsekNpc extends PathfinderMob {
     protected void registerGoals() {
         this.goalSelector.addGoal(0, new FloatGoal(this));
         this.goalSelector.addGoal(2, new FollowOwnerGoal(this, 1.0D, 5.0F, 2.0F));
-        this.goalSelector.addGoal(4, new WaterAvoidingRandomStrollGoal(this, 0.8D));
+        this.goalSelector.addGoal(4, new WaterAvoidingRandomStrollGoal(this, 0.8D) {
+            @Override
+            public boolean canUse() {
+                return !SimsekNpc.this.isHeldInPlace() && super.canUse();
+            }
+
+            @Override
+            public boolean canContinueToUse() {
+                return !SimsekNpc.this.isHeldInPlace() && super.canContinueToUse();
+            }
+        });
         this.goalSelector.addGoal(5, new LookAtPlayerGoal(this, Player.class, 8.0F));
         this.goalSelector.addGoal(6, new RandomLookAroundGoal(this));
     }
@@ -108,17 +135,29 @@ public class SimsekNpc extends PathfinderMob {
         if (hand != InteractionHand.MAIN_HAND) {
             return InteractionResult.PASS;
         }
-        if (!this.level().isClientSide) {
-            if (this.ownerUuid == null) {
-                this.ownerUuid = player.getUUID();
+        boolean clientSide = this.level().isClientSide;
+        if (getOwnerUuid() == null) {
+            if (!clientSide) {
+                setOwnerUuid(player.getUUID());
                 player.displayClientMessage(Component.translatable("message.simsekordu.owner_set"), true);
-            } else if (this.ownerUuid.equals(player.getUUID())) {
-                player.displayClientMessage(Component.translatable("message.simsekordu.already_yours"), true);
-            } else {
-                player.displayClientMessage(Component.translatable("message.simsekordu.owned_by_other"), true);
             }
+        } else if (isOwnedBy(player)) {
+            if (!player.getItemInHand(hand).isEmpty()) {
+                return InteractionResult.PASS;
+            }
+            if (player instanceof ServerPlayer serverPlayer) {
+                openMenu(serverPlayer);
+            }
+        } else if (!clientSide) {
+            player.displayClientMessage(Component.translatable("message.simsekordu.owned_by_other"), true);
         }
-        return InteractionResult.sidedSuccess(this.level().isClientSide);
+        return InteractionResult.sidedSuccess(clientSide);
+    }
+
+    private void openMenu(ServerPlayer player) {
+        player.openMenu(
+                new SimpleMenuProvider((containerId, playerInventory, p) -> new SimsekNpcMenu(containerId, playerInventory, this), getName()),
+                buf -> buf.writeVarInt(getId()));
     }
 
     public Job getJob() {
@@ -158,6 +197,7 @@ public class SimsekNpc extends PathfinderMob {
         if (this.level().isClientSide || amount <= 0) {
             return;
         }
+        Rank oldRank = getRank();
         int level = getNpcLevel();
         long xp = (long) getXp() + amount;
         int levelsGained = 0;
@@ -169,13 +209,11 @@ public class SimsekNpc extends PathfinderMob {
         this.entityData.set(DATA_XP, (int) xp);
         if (levelsGained > 0) {
             this.entityData.set(DATA_LEVEL, level);
-            onLevelUp();
+            onLevelUp(oldRank, Rank.fromLevel(level));
         }
     }
 
-    private void onLevelUp() {
-        Rank oldRank = getRank();
-        Rank newRank = Rank.fromLevel(getNpcLevel());
+    private void onLevelUp(Rank oldRank, Rank newRank) {
         boolean promoted = newRank != oldRank;
         if (promoted) {
             this.entityData.set(DATA_RANK, newRank.ordinal());
@@ -190,11 +228,17 @@ public class SimsekNpc extends PathfinderMob {
                     SoundSource.NEUTRAL, 1.0F, 1.0F);
         }
 
-        if (promoted && this.ownerUuid != null && getServer() != null) {
-            ServerPlayer owner = getServer().getPlayerList().getPlayer(this.ownerUuid);
+        UUID ownerUuid = getOwnerUuid();
+        if (promoted && ownerUuid != null && getServer() != null) {
+            ServerPlayer owner = getServer().getPlayerList().getPlayer(ownerUuid);
             if (owner != null) {
-                owner.sendSystemMessage(Component.translatable("message.simsekordu.rank_up",
-                        getNpcName(), Component.translatable(newRank.getTranslationKey())));
+                // One message per rank gained, in case several ranks were skipped at once.
+                for (Rank rank : Rank.values()) {
+                    if (rank.ordinal() > oldRank.ordinal() && rank.ordinal() <= newRank.ordinal()) {
+                        owner.sendSystemMessage(Component.translatable("message.simsekordu.rank_up",
+                                getNpcName(), Component.translatable(rank.getTranslationKey())));
+                    }
+                }
             }
         }
     }
@@ -235,12 +279,62 @@ public class SimsekNpc extends PathfinderMob {
 
     @Nullable
     public UUID getOwnerUuid() {
-        return this.ownerUuid;
+        return this.entityData.get(DATA_OWNER).orElse(null);
+    }
+
+    public void setOwnerUuid(@Nullable UUID uuid) {
+        this.entityData.set(DATA_OWNER, Optional.ofNullable(uuid));
+    }
+
+    public boolean isOwnedBy(Player player) {
+        return player.getUUID().equals(getOwnerUuid());
     }
 
     @Nullable
     public Player getOwner() {
-        return this.ownerUuid == null ? null : this.level().getPlayerByUUID(this.ownerUuid);
+        UUID ownerUuid = getOwnerUuid();
+        return ownerUuid == null ? null : this.level().getPlayerByUUID(ownerUuid);
+    }
+
+    public SimpleContainer getInventory() {
+        return this.inventory;
+    }
+
+    public boolean isWaiting() {
+        return this.entityData.get(DATA_WAITING);
+    }
+
+    public void setWaiting(boolean waiting) {
+        this.entityData.set(DATA_WAITING, waiting);
+        if (waiting) {
+            getNavigation().stop();
+        }
+    }
+
+    /** True while the NPC must stand still: told to wait, or a player is using its menu. */
+    public boolean isHeldInPlace() {
+        return isWaiting() || this.menuUsers > 0;
+    }
+
+    public void addMenuUser() {
+        this.menuUsers++;
+        getNavigation().stop();
+    }
+
+    public void removeMenuUser() {
+        this.menuUsers = Math.max(0, this.menuUsers - 1);
+    }
+
+    @Override
+    protected void dropEquipment() {
+        super.dropEquipment();
+        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
+            ItemStack stack = this.inventory.getItem(i);
+            if (!stack.isEmpty()) {
+                spawnAtLocation(stack.copy());
+                this.inventory.setItem(i, ItemStack.EMPTY);
+            }
+        }
     }
 
     @Override
@@ -251,9 +345,12 @@ public class SimsekNpc extends PathfinderMob {
     @Override
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
-        if (this.ownerUuid != null) {
-            tag.putUUID(TAG_OWNER, this.ownerUuid);
+        UUID ownerUuid = getOwnerUuid();
+        if (ownerUuid != null) {
+            tag.putUUID(TAG_OWNER, ownerUuid);
         }
+        tag.putBoolean(TAG_WAITING, isWaiting());
+        tag.put(TAG_INVENTORY, ContainerHelper.saveAllItems(new CompoundTag(), this.inventory.getItems(), registryAccess()));
         tag.putString(TAG_JOB, getJob().name());
         tag.putInt(TAG_LEVEL, getNpcLevel());
         tag.putInt(TAG_XP, getXp());
@@ -263,7 +360,10 @@ public class SimsekNpc extends PathfinderMob {
     @Override
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
-        this.ownerUuid = tag.hasUUID(TAG_OWNER) ? tag.getUUID(TAG_OWNER) : null;
+        setOwnerUuid(tag.hasUUID(TAG_OWNER) ? tag.getUUID(TAG_OWNER) : null);
+        this.entityData.set(DATA_WAITING, tag.getBoolean(TAG_WAITING));
+        this.inventory.clearContent();
+        ContainerHelper.loadAllItems(tag.getCompound(TAG_INVENTORY), this.inventory.getItems(), registryAccess());
         setJob(Job.byName(tag.getString(TAG_JOB)));
         int level = tag.contains(TAG_LEVEL) ? Math.max(1, tag.getInt(TAG_LEVEL)) : 1;
         this.entityData.set(DATA_LEVEL, level);
