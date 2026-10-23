@@ -1,0 +1,7 @@
+{
+  "entity.simsekordu.simsek_npc": "Şimşek Askeri",
+  "item.simsekordu.simsek_npc_spawn_egg": "Şimşek Askeri Yumurtası",
+  "message.simsekordu.owner_set": "Bu asker artık seni takip ediyor.",
+  "message.simsekordu.already_yours": "Bu asker zaten seni takip ediyor.",
+  "message.simsekordu.owned_by_other": "Bu asker başka bir oyuncuya ait."
+}

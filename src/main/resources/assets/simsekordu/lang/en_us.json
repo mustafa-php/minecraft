@@ -1,0 +1,7 @@
+{
+  "entity.simsekordu.simsek_npc": "Simsek Soldier",
+  "item.simsekordu.simsek_npc_spawn_egg": "Simsek Soldier Spawn Egg",
+  "message.simsekordu.owner_set": "This soldier now follows you.",
+  "message.simsekordu.already_yours": "This soldier already follows you.",
+  "message.simsekordu.owned_by_other": "This soldier belongs to another player."
+}
