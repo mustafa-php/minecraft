@@ -1,6 +1,7 @@
 package com.simsek.simsekordu.item;
 
 import com.simsek.simsekordu.data.MiningRegion;
+import com.simsek.simsekordu.entity.goal.HuntHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleOptions;
@@ -15,6 +16,9 @@ public final class WandVisuals {
     private static final ParticleOptions CORNER_1 = new DustParticleOptions(new Vector3f(0.2F, 1.0F, 0.3F), 1.5F);
     private static final ParticleOptions CORNER_2 = new DustParticleOptions(new Vector3f(1.0F, 0.25F, 0.25F), 1.5F);
     private static final ParticleOptions STORAGE = new DustParticleOptions(new Vector3f(0.3F, 0.6F, 1.0F), 1.5F);
+    private static final ParticleOptions HUNT_AREA = new DustParticleOptions(new Vector3f(1.0F, 0.5F, 0.1F), 1.0F);
+    private static final ParticleOptions HUNT_CENTER = new DustParticleOptions(new Vector3f(1.0F, 0.5F, 0.1F), 1.5F);
+    private static final int HUNT_RING_POINTS = 40;
 
     private WandVisuals() {
     }
@@ -33,6 +37,25 @@ public final class WandVisuals {
         selection.corner2().ifPresent(pos -> showCorner(player, 2, pos));
         selection.region().ifPresent(region -> showRegion(player, region));
         selection.storage().ifPresent(pos -> showStorage(player, pos));
+        selection.huntCenter().ifPresent(pos -> showHuntArea(player, pos));
+    }
+
+    /** A ring on the ground at the hunting radius around {@code center}, and a short pillar marking the centre. */
+    public static void showHuntArea(ServerPlayer player, BlockPos center) {
+        if (!(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        double radius = HuntHelper.RADIUS;
+        double y = center.getY() + 0.3D;
+        for (int i = 0; i < HUNT_RING_POINTS; i++) {
+            double angle = 2.0D * Math.PI * i / HUNT_RING_POINTS;
+            level.sendParticles(player, HUNT_AREA, true, center.getX() + 0.5D + Math.cos(angle) * radius, y,
+                    center.getZ() + 0.5D + Math.sin(angle) * radius, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+        }
+        for (int i = 0; i < 6; i++) {
+            level.sendParticles(player, HUNT_CENTER, true, center.getX() + 0.5D, center.getY() + 0.3D + i * 0.5D,
+                    center.getZ() + 0.5D, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+        }
     }
 
     public static void showRegion(ServerPlayer player, MiningRegion region) {

@@ -1,6 +1,7 @@
 package com.simsek.simsekordu.network;
 
 import com.simsek.simsekordu.SimsekOrdu;
+import com.simsek.simsekordu.data.HuntMode;
 import com.simsek.simsekordu.data.Job;
 import com.simsek.simsekordu.entity.SimsekNpc;
 import com.simsek.simsekordu.menu.SimsekNpcMenu;
@@ -31,7 +32,8 @@ public final class SimsekNpcPayloads {
                 .playToServer(SetJobPayload.TYPE, SetJobPayload.STREAM_CODEC, SimsekNpcPayloads::handleSetJob)
                 .playToServer(SetWaitingPayload.TYPE, SetWaitingPayload.STREAM_CODEC, SimsekNpcPayloads::handleSetWaiting)
                 .playToServer(RenamePayload.TYPE, RenamePayload.STREAM_CODEC, SimsekNpcPayloads::handleRename)
-                .playToServer(CancelTaskPayload.TYPE, CancelTaskPayload.STREAM_CODEC, SimsekNpcPayloads::handleCancelTask);
+                .playToServer(CancelTaskPayload.TYPE, CancelTaskPayload.STREAM_CODEC, SimsekNpcPayloads::handleCancelTask)
+                .playToServer(SetHuntModePayload.TYPE, SetHuntModePayload.STREAM_CODEC, SimsekNpcPayloads::handleSetHuntMode);
     }
 
     /** Returns the NPC if {@code player} owns it and is within menu range, otherwise null. */
@@ -75,7 +77,15 @@ public final class SimsekNpcPayloads {
     private static void handleCancelTask(CancelTaskPayload payload, IPayloadContext context) {
         SimsekNpc npc = findControlledNpc(context.player(), payload.entityId());
         if (npc != null) {
-            npc.cancelMiningTask();
+            npc.cancelCurrentTask();
+        }
+    }
+
+    private static void handleSetHuntMode(SetHuntModePayload payload, IPayloadContext context) {
+        SimsekNpc npc = findControlledNpc(context.player(), payload.entityId());
+        HuntMode[] modes = HuntMode.values();
+        if (npc != null && payload.modeId() >= 0 && payload.modeId() < modes.length) {
+            npc.setHuntMode(modes[payload.modeId()]);
         }
     }
 
@@ -138,6 +148,19 @@ public final class SimsekNpcPayloads {
         public static final StreamCodec<RegistryFriendlyByteBuf, CancelTaskPayload> STREAM_CODEC = StreamCodec.composite(
                 ByteBufCodecs.VAR_INT, CancelTaskPayload::entityId,
                 CancelTaskPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SetHuntModePayload(int entityId, int modeId) implements CustomPacketPayload {
+        public static final Type<SetHuntModePayload> TYPE = new Type<>(id("set_hunt_mode"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetHuntModePayload> STREAM_CODEC = StreamCodec.composite(
+                ByteBufCodecs.VAR_INT, SetHuntModePayload::entityId,
+                ByteBufCodecs.VAR_INT, SetHuntModePayload::modeId,
+                SetHuntModePayload::new);
 
         @Override
         public Type<? extends CustomPacketPayload> type() {

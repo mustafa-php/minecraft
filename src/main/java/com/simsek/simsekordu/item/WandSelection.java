@@ -14,12 +14,13 @@ import net.minecraft.world.level.Level;
 
 /** What a Commander's Wand currently has selected. Stored on the item as a data component. */
 public record WandSelection(ResourceKey<Level> dimension, Optional<BlockPos> corner1, Optional<BlockPos> corner2,
-                            Optional<BlockPos> storage) {
+                            Optional<BlockPos> storage, Optional<BlockPos> huntCenter) {
     public static final Codec<WandSelection> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Level.RESOURCE_KEY_CODEC.fieldOf("dimension").forGetter(WandSelection::dimension),
             BlockPos.CODEC.optionalFieldOf("corner1").forGetter(WandSelection::corner1),
             BlockPos.CODEC.optionalFieldOf("corner2").forGetter(WandSelection::corner2),
-            BlockPos.CODEC.optionalFieldOf("storage").forGetter(WandSelection::storage)
+            BlockPos.CODEC.optionalFieldOf("storage").forGetter(WandSelection::storage),
+            BlockPos.CODEC.optionalFieldOf("hunt_center").forGetter(WandSelection::huntCenter)
     ).apply(instance, WandSelection::new));
 
     public static final StreamCodec<RegistryFriendlyByteBuf, WandSelection> STREAM_CODEC = StreamCodec.composite(
@@ -27,14 +28,15 @@ public record WandSelection(ResourceKey<Level> dimension, Optional<BlockPos> cor
             ByteBufCodecs.optional(BlockPos.STREAM_CODEC), WandSelection::corner1,
             ByteBufCodecs.optional(BlockPos.STREAM_CODEC), WandSelection::corner2,
             ByteBufCodecs.optional(BlockPos.STREAM_CODEC), WandSelection::storage,
+            ByteBufCodecs.optional(BlockPos.STREAM_CODEC), WandSelection::huntCenter,
             WandSelection::new);
 
     public static WandSelection empty(ResourceKey<Level> dimension) {
-        return new WandSelection(dimension, Optional.empty(), Optional.empty(), Optional.empty());
+        return new WandSelection(dimension, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     public boolean isEmpty() {
-        return this.corner1.isEmpty() && this.corner2.isEmpty() && this.storage.isEmpty();
+        return this.corner1.isEmpty() && this.corner2.isEmpty() && this.storage.isEmpty() && this.huntCenter.isEmpty();
     }
 
     /** This selection if it was made in {@code dimension}, otherwise an empty one: corners never span dimensions. */
@@ -43,15 +45,19 @@ public record WandSelection(ResourceKey<Level> dimension, Optional<BlockPos> cor
     }
 
     public WandSelection withCorner1(BlockPos pos) {
-        return new WandSelection(this.dimension, Optional.of(pos), this.corner2, this.storage);
+        return new WandSelection(this.dimension, Optional.of(pos), this.corner2, this.storage, this.huntCenter);
     }
 
     public WandSelection withCorner2(BlockPos pos) {
-        return new WandSelection(this.dimension, this.corner1, Optional.of(pos), this.storage);
+        return new WandSelection(this.dimension, this.corner1, Optional.of(pos), this.storage, this.huntCenter);
     }
 
     public WandSelection withStorage(BlockPos pos) {
-        return new WandSelection(this.dimension, this.corner1, this.corner2, Optional.of(pos));
+        return new WandSelection(this.dimension, this.corner1, this.corner2, Optional.of(pos), this.huntCenter);
+    }
+
+    public WandSelection withHuntCenter(BlockPos pos) {
+        return new WandSelection(this.dimension, this.corner1, this.corner2, this.storage, Optional.of(pos));
     }
 
     public Optional<MiningRegion> region() {

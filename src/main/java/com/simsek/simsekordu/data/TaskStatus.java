@@ -1,11 +1,15 @@
 package com.simsek.simsekordu.data;
 
-/** What a miner is currently doing (or why it is not working); synced to the client for the info tab. */
-public enum MiningStatus {
+/** What a soldier is currently doing (or why it is not working); synced to the client for the info tab. */
+public enum TaskStatus {
     NONE("none"),
     IDLE("idle"),
     MINING("mining"),
     NEEDS_PICKAXE("needs_pickaxe"),
+    SEARCHING("searching"),
+    HUNTING("hunting"),
+    COLLECTING("collecting"),
+    RETREATING("retreating"),
     TO_STORAGE("to_storage"),
     STORAGE_FULL("storage_full"),
     NO_STORAGE("no_storage"),
@@ -13,16 +17,16 @@ public enum MiningStatus {
 
     private final String translationKey;
 
-    MiningStatus(String id) {
-        this.translationKey = "status.simsekordu.mining." + id;
+    TaskStatus(String id) {
+        this.translationKey = "status.simsekordu.task." + id;
     }
 
     public String getTranslationKey() {
         return this.translationKey;
     }
 
-    public static MiningStatus byId(int id) {
-        MiningStatus[] values = values();
+    public static TaskStatus byId(int id) {
+        TaskStatus[] values = values();
         return id >= 0 && id < values.length ? values[id] : NONE;
     }
 }

@@ -3,6 +3,7 @@ package com.simsek.simsekordu.item;
 import com.simsek.simsekordu.data.Job;
 import com.simsek.simsekordu.data.MiningRegion;
 import com.simsek.simsekordu.entity.SimsekNpc;
+import com.simsek.simsekordu.entity.goal.HuntHelper;
 import com.simsek.simsekordu.registry.ModDataComponents;
 import java.util.List;
 import java.util.Optional;
@@ -19,6 +20,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -54,6 +56,19 @@ public class CommanderWandItem extends Item {
     @Override
     public boolean isFoil(ItemStack stack) {
         return true;
+    }
+
+    /** Shift + right click into the air (no block in reach) makes the player's position the hunting centre. */
+    @Override
+    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+        if (!player.isSecondaryUseActive()) {
+            return InteractionResultHolder.pass(stack);
+        }
+        if (!level.isClientSide && player instanceof ServerPlayer serverPlayer) {
+            selectHuntCenter(stack, serverPlayer);
+        }
+        return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
     }
 
     /** Runs before the clicked block's own interaction, so corners can also be set on chests, doors and the like. */
@@ -104,8 +119,10 @@ public class CommanderWandItem extends Item {
         tooltip.add(selectionLine("item.simsekordu.commander_wand.corner1", selection == null ? Optional.empty() : selection.corner1()));
         tooltip.add(selectionLine("item.simsekordu.commander_wand.corner2", selection == null ? Optional.empty() : selection.corner2()));
         tooltip.add(selectionLine("item.simsekordu.commander_wand.storage", selection == null ? Optional.empty() : selection.storage()));
+        tooltip.add(selectionLine("item.simsekordu.commander_wand.hunt_center", selection == null ? Optional.empty() : selection.huntCenter()));
         tooltip.add(Component.translatable("item.simsekordu.commander_wand.help.corners").withStyle(ChatFormatting.DARK_GRAY));
         tooltip.add(Component.translatable("item.simsekordu.commander_wand.help.storage").withStyle(ChatFormatting.DARK_GRAY));
+        tooltip.add(Component.translatable("item.simsekordu.commander_wand.help.hunt").withStyle(ChatFormatting.DARK_GRAY));
         tooltip.add(Component.translatable("item.simsekordu.commander_wand.help.assign").withStyle(ChatFormatting.DARK_GRAY));
     }
 
@@ -150,6 +167,22 @@ public class CommanderWandItem extends Item {
         WandVisuals.showCorner(player, corner, pos);
     }
 
+    /** Makes the player's block position the hunting centre. */
+    public static void selectHuntCenter(ItemStack stack, ServerPlayer player) {
+        ServerLevel level = player.serverLevel();
+        BlockPos pos = player.blockPosition();
+        WandSelection selection = getSelection(stack, level.dimension());
+        if (selection.huntCenter().isPresent() && selection.huntCenter().get().equals(pos)) {
+            // Right click repeats while the button is held; nothing changed, so stay quiet.
+            return;
+        }
+        stack.set(ModDataComponents.WAND_SELECTION.get(), selection.withHuntCenter(pos));
+        player.displayClientMessage(Component.translatable("message.simsekordu.wand.hunt_center_set",
+                pos.getX(), pos.getY(), pos.getZ(), HuntHelper.RADIUS).withStyle(ChatFormatting.GOLD), true);
+        level.playSound(null, pos, SoundEvents.NOTE_BLOCK_CHIME.value(), SoundSource.PLAYERS, 0.8F, 1.0F);
+        WandVisuals.showHuntArea(player, pos);
+    }
+
     public static void selectStorage(ItemStack stack, ServerPlayer player, BlockPos pos) {
         ServerLevel level = player.serverLevel();
         if (findItemHandler(level, pos) == null) {
@@ -183,32 +216,62 @@ public class CommanderWandItem extends Item {
         return handler != null ? handler : level.getCapability(Capabilities.ItemHandler.BLOCK, pos, Direction.UP);
     }
 
+    /**
+     * Hands the selection to {@code npc}: a hunter gets the hunting centre, a miner the mining region, anyone else
+     * whatever is selected. The storage block, if selected, is shared by both tasks.
+     */
     private static void assignTask(ItemStack stack, ServerPlayer player, SimsekNpc npc) {
         ServerLevel level = player.serverLevel();
         WandSelection selection = getSelection(stack, level.dimension());
-        Optional<MiningRegion> region = selection.region();
-        if (region.isEmpty()) {
-            player.displayClientMessage(Component.translatable("message.simsekordu.wand.no_region").withStyle(ChatFormatting.RED), true);
+        Job job = npc.getJob();
+        BlockPos storage = selection.storage().orElse(null);
+        boolean assigned = false;
+
+        if (job != Job.HUNTER) {
+            Optional<MiningRegion> region = selection.region();
+            if (region.isPresent()) {
+                if (!region.get().fitsLimit()) {
+                    player.displayClientMessage(Component.translatable("message.simsekordu.wand.too_large",
+                            region.get().sizeX(), region.get().sizeY(), region.get().sizeZ(), MiningRegion.MAX_SIZE)
+                            .withStyle(ChatFormatting.RED), true);
+                    return;
+                }
+                npc.assignMiningTask(region.get(), storage);
+                player.sendSystemMessage(Component.translatable("message.simsekordu.task_assigned",
+                        npc.getNpcName(), region.get().sizeX(), region.get().sizeY(), region.get().sizeZ(), npc.getMiningRemaining()));
+                assigned = true;
+            } else if (job == Job.MINER) {
+                player.displayClientMessage(Component.translatable("message.simsekordu.wand.no_region").withStyle(ChatFormatting.RED), true);
+                return;
+            }
+        }
+        if (job != Job.MINER) {
+            Optional<BlockPos> center = selection.huntCenter();
+            if (center.isPresent()) {
+                npc.assignHuntTask(center.get(), storage);
+                player.sendSystemMessage(Component.translatable("message.simsekordu.hunt_assigned", npc.getNpcName(), HuntHelper.RADIUS,
+                        center.get().getX(), center.get().getY(), center.get().getZ(),
+                        Component.translatable(npc.getHuntMode().getTranslationKey())));
+                assigned = true;
+            } else if (job == Job.HUNTER) {
+                player.displayClientMessage(Component.translatable("message.simsekordu.wand.no_hunt_center").withStyle(ChatFormatting.RED), true);
+                return;
+            }
+        }
+        if (!assigned) {
+            player.displayClientMessage(Component.translatable("message.simsekordu.wand.nothing_selected").withStyle(ChatFormatting.RED), true);
             return;
         }
-        if (!region.get().fitsLimit()) {
-            player.displayClientMessage(Component.translatable("message.simsekordu.wand.too_large",
-                    region.get().sizeX(), region.get().sizeY(), region.get().sizeZ(), MiningRegion.MAX_SIZE)
-                    .withStyle(ChatFormatting.RED), true);
-            return;
-        }
-        npc.assignMiningTask(region.get(), selection.storage().orElse(null));
+
         level.sendParticles(ParticleTypes.HAPPY_VILLAGER, npc.getX(), npc.getY() + npc.getBbHeight() * 0.7D, npc.getZ(),
                 10, 0.4D, 0.5D, 0.4D, 0.0D);
         level.playSound(null, npc.blockPosition(), SoundEvents.VILLAGER_YES, SoundSource.NEUTRAL, 1.0F, 1.0F);
-        player.sendSystemMessage(Component.translatable("message.simsekordu.task_assigned",
-                npc.getNpcName(), region.get().sizeX(), region.get().sizeY(), region.get().sizeZ(), npc.getMiningRemaining()));
-        if (selection.storage().isEmpty()) {
+        if (npc.getStoragePos() == null) {
             player.sendSystemMessage(Component.translatable("message.simsekordu.task_no_storage", npc.getNpcName())
                     .withStyle(ChatFormatting.YELLOW));
         }
-        if (npc.getJob() != Job.MINER) {
-            player.sendSystemMessage(Component.translatable("message.simsekordu.task_not_miner", npc.getNpcName())
+        if (job != Job.MINER && job != Job.HUNTER) {
+            player.sendSystemMessage(Component.translatable("message.simsekordu.task_no_job", npc.getNpcName())
                     .withStyle(ChatFormatting.YELLOW));
         }
     }
