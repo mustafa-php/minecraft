@@ -1,12 +1,16 @@
 package com.simsek.simsekordu.entity;
 
 import com.simsek.simsekordu.SimsekOrdu;
+import com.simsek.simsekordu.data.HuntMode;
+import com.simsek.simsekordu.data.HuntXp;
 import com.simsek.simsekordu.data.Job;
 import com.simsek.simsekordu.data.MiningRegion;
-import com.simsek.simsekordu.data.MiningStatus;
+import com.simsek.simsekordu.data.TaskStatus;
 import com.simsek.simsekordu.data.NpcNames;
 import com.simsek.simsekordu.data.Rank;
 import com.simsek.simsekordu.entity.goal.FollowOwnerGoal;
+import com.simsek.simsekordu.entity.goal.HuntGoal;
+import com.simsek.simsekordu.entity.goal.HuntHelper;
 import com.simsek.simsekordu.entity.goal.MineGoal;
 import com.simsek.simsekordu.entity.goal.MiningHelper;
 import com.simsek.simsekordu.menu.SimsekNpcMenu;
@@ -47,17 +51,26 @@ import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.AvoidEntityGoal;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
 import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.entity.ai.goal.WrappedGoal;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.monster.RangedAttackMob;
+import net.minecraft.world.entity.projectile.AbstractArrow;
+import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerLevelAccessor;
 
-public class SimsekNpc extends PathfinderMob {
+public class SimsekNpc extends PathfinderMob implements RangedAttackMob {
     private static final String TAG_OWNER = "Owner";
     private static final String TAG_JOB = "Job";
     private static final String TAG_LEVEL = "Level";
@@ -69,9 +82,22 @@ public class SimsekNpc extends PathfinderMob {
     private static final String TAG_TASK_MIN = "Min";
     private static final String TAG_TASK_MAX = "Max";
     private static final String TAG_TASK_STORAGE = "Storage";
+    private static final String TAG_STORAGE = "StoragePos";
     private static final String TAG_TASK_REMAINING = "Remaining";
+    private static final String TAG_HUNT_CENTER = "HuntCenter";
+    private static final String TAG_HUNT_MODE = "HuntMode";
+    private static final String TAG_HUNT_KILLS = "HuntKills";
+    private static final String TAG_RETREATING = "Retreating";
 
     public static final int INVENTORY_SIZE = 9;
+
+    /** A hunter below this fraction of its health falls back to rest until it is back at {@link #RESUME_AT}. */
+    private static final float RETREAT_BELOW = 0.30F;
+    private static final float RESUME_AT = 0.80F;
+    /** Resting heals one health point every two seconds. */
+    private static final int RETREAT_HEAL_INTERVAL = 40;
+    /** Monsters this close make a resting hunter run instead of standing still. */
+    private static final float RETREAT_FLEE_DISTANCE = 10.0F;
 
     private static final ResourceLocation RANK_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath(SimsekOrdu.MODID, "rank_bonus");
 
@@ -99,12 +125,24 @@ public class SimsekNpc extends PathfinderMob {
             SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> DATA_TASK_STATUS =
             SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Optional<BlockPos>> DATA_HUNT_CENTER =
+            SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.OPTIONAL_BLOCK_POS);
+    private static final EntityDataAccessor<Integer> DATA_HUNT_MODE =
+            SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> DATA_HUNT_KILLS =
+            SynchedEntityData.defineId(SimsekNpc.class, EntityDataSerializers.INT);
 
     private final SimpleContainer inventory = new SimpleContainer(INVENTORY_SIZE);
     /** Number of players that currently have this NPC's menu open (server side only). */
     private int menuUsers;
     /** Notices already sent to the owner, so a recurring problem is only reported once (not persisted). */
     private final Set<String> sentNotices = new HashSet<>();
+    /** True while a hunter is resting after it got badly hurt (see {@link #updateRetreat}); saved with the hunt data. */
+    private boolean retreating;
+    private int retreatHealTimer;
+    /** Where the last victim died, until the hunt goal has looked for its drops (server side, not persisted). */
+    @Nullable
+    private BlockPos pendingLootCenter;
 
     public SimsekNpc(EntityType<? extends SimsekNpc> type, Level level) {
         super(type, level);
@@ -133,7 +171,10 @@ public class SimsekNpc extends PathfinderMob {
         builder.define(DATA_TASK_MAX, Optional.empty());
         builder.define(DATA_STORAGE, Optional.empty());
         builder.define(DATA_TASK_REMAINING, 0);
-        builder.define(DATA_TASK_STATUS, MiningStatus.NONE.ordinal());
+        builder.define(DATA_TASK_STATUS, TaskStatus.NONE.ordinal());
+        builder.define(DATA_HUNT_CENTER, Optional.empty());
+        builder.define(DATA_HUNT_MODE, HuntMode.ANIMAL.ordinal());
+        builder.define(DATA_HUNT_KILLS, 0);
     }
 
     @Override
@@ -149,7 +190,31 @@ public class SimsekNpc extends PathfinderMob {
     @Override
     protected void registerGoals() {
         this.goalSelector.addGoal(0, new FloatGoal(this));
+        this.goalSelector.addGoal(0, new AvoidEntityGoal<>(this, Creeper.class, 8.0F, 1.0D, 1.35D) {
+            @Override
+            public boolean canUse() {
+                return isHuntingActive() && super.canUse();
+            }
+
+            @Override
+            public boolean canContinueToUse() {
+                return isHuntingActive() && super.canContinueToUse();
+            }
+        });
+        // A hurt hunter that is resting must not stand still while monsters close in on it.
+        this.goalSelector.addGoal(0, new AvoidEntityGoal<>(this, Monster.class, RETREAT_FLEE_DISTANCE, 1.0D, 1.3D) {
+            @Override
+            public boolean canUse() {
+                return isRetreating() && isHuntingActive() && super.canUse();
+            }
+
+            @Override
+            public boolean canContinueToUse() {
+                return isRetreating() && isHuntingActive() && super.canContinueToUse();
+            }
+        });
         this.goalSelector.addGoal(1, new MineGoal(this));
+        this.goalSelector.addGoal(1, new HuntGoal(this));
         this.goalSelector.addGoal(2, new FollowOwnerGoal(this, 1.0D, 5.0F, 2.0F));
         this.goalSelector.addGoal(4, new WaterAvoidingRandomStrollGoal(this, 0.8D) {
             @Override
@@ -379,11 +444,11 @@ public class SimsekNpc extends PathfinderMob {
         this.entityData.set(DATA_TASK_REMAINING, Math.max(0, remaining));
     }
 
-    public MiningStatus getMiningStatus() {
-        return MiningStatus.byId(this.entityData.get(DATA_TASK_STATUS));
+    public TaskStatus getTaskStatus() {
+        return TaskStatus.byId(this.entityData.get(DATA_TASK_STATUS));
     }
 
-    public void setMiningStatus(MiningStatus status) {
+    public void setTaskStatus(TaskStatus status) {
         this.entityData.set(DATA_TASK_STATUS, status.ordinal());
     }
 
@@ -391,12 +456,173 @@ public class SimsekNpc extends PathfinderMob {
     public void assignMiningTask(MiningRegion region, @Nullable BlockPos storage) {
         this.entityData.set(DATA_TASK_MIN, Optional.of(region.min()));
         this.entityData.set(DATA_TASK_MAX, Optional.of(region.max()));
-        this.entityData.set(DATA_STORAGE, Optional.ofNullable(storage));
+        if (storage != null) {
+            this.entityData.set(DATA_STORAGE, Optional.of(storage));
+        }
         this.sentNotices.clear();
         if (this.level() instanceof ServerLevel serverLevel) {
-            setMiningRemaining(MiningHelper.countMineable(serverLevel, region, storage).mineable());
+            setMiningRemaining(MiningHelper.countMineable(serverLevel, region, getStoragePos()).mineable());
         }
-        setMiningStatus(MiningStatus.IDLE);
+        setTaskStatus(TaskStatus.IDLE);
+    }
+
+    // ---- hunting task ---------------------------------------------------------------------------
+
+    @Nullable
+    public BlockPos getHuntCenter() {
+        return this.entityData.get(DATA_HUNT_CENTER).orElse(null);
+    }
+
+    public HuntMode getHuntMode() {
+        return HuntMode.byId(this.entityData.get(DATA_HUNT_MODE));
+    }
+
+    public void setHuntMode(HuntMode mode) {
+        this.entityData.set(DATA_HUNT_MODE, mode.ordinal());
+    }
+
+    /** Total number of kills this soldier has made. */
+    public int getHuntKills() {
+        return this.entityData.get(DATA_HUNT_KILLS);
+    }
+
+    /** Hands a hunting centre (and optionally a storage block) to this soldier. Server side only. */
+    public void assignHuntTask(BlockPos center, @Nullable BlockPos storage) {
+        this.entityData.set(DATA_HUNT_CENTER, Optional.of(center));
+        if (storage != null) {
+            this.entityData.set(DATA_STORAGE, Optional.of(storage));
+        }
+        this.sentNotices.clear();
+        setRetreating(false);
+        setTaskStatus(TaskStatus.IDLE);
+    }
+
+    public void cancelHuntTask() {
+        this.entityData.set(DATA_HUNT_CENTER, Optional.empty());
+        setRetreating(false);
+        this.pendingLootCenter = null;
+        if (getMiningRegion() == null) {
+            this.entityData.set(DATA_STORAGE, Optional.empty());
+        }
+        setTaskStatus(TaskStatus.NONE);
+        this.sentNotices.clear();
+    }
+
+    /** Cancels the task the info tab shows for the current job: hunting for hunters, mining otherwise. */
+    public void cancelCurrentTask() {
+        if (getJob() == Job.HUNTER) {
+            cancelHuntTask();
+        } else {
+            cancelMiningTask();
+        }
+    }
+
+    private boolean isHuntingActive() {
+        return getJob() == Job.HUNTER && getHuntCenter() != null && !isHeldInPlace();
+    }
+
+    /** True while this hunter rests: it fell below 30 % health and has not yet healed back up to 80 %. */
+    public boolean isRetreating() {
+        return this.retreating;
+    }
+
+    public void setRetreating(boolean retreating) {
+        this.retreating = retreating;
+        this.retreatHealTimer = 0;
+    }
+
+    @Override
+    protected void customServerAiStep() {
+        super.customServerAiStep();
+        updateRetreat();
+    }
+
+    /**
+     * Owns the resting state of a hunter so that it keeps healing no matter which goal is running (a fleeing hunter
+     * must heal too): below 30 % health it starts resting, heals one point every two seconds and is done at 80 %.
+     */
+    private void updateRetreat() {
+        if (getJob() != Job.HUNTER || getHuntCenter() == null) {
+            this.retreating = false;
+            this.retreatHealTimer = 0;
+            return;
+        }
+        float fraction = getHealth() / getMaxHealth();
+        if (!this.retreating) {
+            if (fraction < RETREAT_BELOW) {
+                setRetreating(true);
+            }
+            return;
+        }
+        if (fraction >= RESUME_AT) {
+            setRetreating(false);
+        } else if (++this.retreatHealTimer >= RETREAT_HEAL_INTERVAL) {
+            this.retreatHealTimer = 0;
+            heal(1.0F);
+        }
+    }
+
+    /** Called when this soldier's attack (melee or arrow) killed {@code victim}: counts the kill and awards XP. */
+    public void onHuntKill(LivingEntity victim) {
+        this.entityData.set(DATA_HUNT_KILLS, getHuntKills() + 1);
+        addXp(HuntXp.xpFor(victim));
+        this.pendingLootCenter = victim.blockPosition();
+    }
+
+    /** The place of the last kill if its drops have not been looked for yet; clears it. */
+    @Nullable
+    public BlockPos consumePendingLootCenter() {
+        BlockPos center = this.pendingLootCenter;
+        this.pendingLootCenter = null;
+        return center;
+    }
+
+    @Override
+    public boolean canFireProjectileWeapon(ProjectileWeaponItem weapon) {
+        return weapon instanceof BowItem;
+    }
+
+    /** Fires the first arrow of the inventory with the bow in the main hand; the spread depends on the rank. */
+    @Override
+    public void performRangedAttack(LivingEntity target, float power) {
+        ItemStack bow = getMainHandItem();
+        ItemStack ammo = findArrows();
+        if (!HuntHelper.isBow(bow) || ammo.isEmpty()) {
+            return;
+        }
+        ItemStack arrowStack = ammo.copyWithCount(1);
+        AbstractArrow arrow = ProjectileUtil.getMobArrow(this, arrowStack, power, bow);
+        if (bow.getItem() instanceof ProjectileWeaponItem weaponItem) {
+            arrow = weaponItem.customArrow(arrow, arrowStack, bow);
+        }
+        // Rank bonuses: stronger arrows (as for melee hits) and a tighter spread.
+        arrow.setBaseDamage(arrow.getBaseDamage() * getRank().getAttackDamageMultiplier());
+        double dx = target.getX() - getX();
+        double dy = target.getY(0.3333333333333333D) - arrow.getY();
+        double dz = target.getZ() - getZ();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        arrow.shoot(dx, dy + horizontal * 0.2D, dz, 1.6F, getRank().getBowInaccuracy());
+        playSound(SoundEvents.SKELETON_SHOOT, 1.0F, 1.0F / (getRandom().nextFloat() * 0.4F + 0.8F));
+        level().addFreshEntity(arrow);
+        ammo.shrink(1);
+        if (ammo.isEmpty()) {
+            for (int i = 0; i < this.inventory.getContainerSize(); i++) {
+                if (this.inventory.getItem(i) == ammo) {
+                    this.inventory.setItem(i, ItemStack.EMPTY);
+                }
+            }
+        }
+        bow.hurtAndBreak(1, this, EquipmentSlot.MAINHAND);
+    }
+
+    /** The first stack of arrows in the inventory (the stack itself, not a copy), or empty. */
+    public ItemStack findArrows() {
+        for (ItemStack stack : this.inventory.getItems()) {
+            if (HuntHelper.isArrow(stack)) {
+                return stack;
+            }
+        }
+        return ItemStack.EMPTY;
     }
 
     /** Reports the finished task to the owner and clears it. Server side only. */
@@ -413,9 +639,11 @@ public class SimsekNpc extends PathfinderMob {
     public void cancelMiningTask() {
         this.entityData.set(DATA_TASK_MIN, Optional.empty());
         this.entityData.set(DATA_TASK_MAX, Optional.empty());
-        this.entityData.set(DATA_STORAGE, Optional.empty());
+        if (getHuntCenter() == null) {
+            this.entityData.set(DATA_STORAGE, Optional.empty());
+        }
         setMiningRemaining(0);
-        setMiningStatus(MiningStatus.NONE);
+        setTaskStatus(TaskStatus.NONE);
         this.sentNotices.clear();
     }
 
@@ -547,13 +775,22 @@ public class SimsekNpc extends PathfinderMob {
             CompoundTag task = new CompoundTag();
             task.put(TAG_TASK_MIN, NbtUtils.writeBlockPos(region.min()));
             task.put(TAG_TASK_MAX, NbtUtils.writeBlockPos(region.max()));
-            BlockPos storage = getStoragePos();
-            if (storage != null) {
-                task.put(TAG_TASK_STORAGE, NbtUtils.writeBlockPos(storage));
-            }
             task.putInt(TAG_TASK_REMAINING, getMiningRemaining());
             tag.put(TAG_MINING_TASK, task);
         }
+        // The storage block is shared by the mining and the hunting task.
+        BlockPos storage = getStoragePos();
+        if (storage != null) {
+            tag.put(TAG_STORAGE, NbtUtils.writeBlockPos(storage));
+        }
+        BlockPos huntCenter = getHuntCenter();
+        if (huntCenter != null) {
+            tag.put(TAG_HUNT_CENTER, NbtUtils.writeBlockPos(huntCenter));
+        }
+        tag.putString(TAG_HUNT_MODE, getHuntMode().name());
+        tag.putInt(TAG_HUNT_KILLS, getHuntKills());
+        // A hunter that is resting must not go back to work at half health just because its chunk was unloaded.
+        tag.putBoolean(TAG_RETREATING, this.retreating);
         if (isMainHandMirrored()) {
             // Never persist the mirrored tool: the inventory already holds it, a second copy would duplicate it.
             ListTag hands = tag.getList("HandItems", 10);
@@ -579,6 +816,7 @@ public class SimsekNpc extends PathfinderMob {
         setNpcName(tag.contains(TAG_NPC_NAME) ? tag.getString(TAG_NPC_NAME) : NpcNames.random(this.random));
         applyRankBonuses();
         readMiningTask(tag);
+        readHuntTask(tag);
     }
 
     private void readMiningTask(CompoundTag tag) {
@@ -589,15 +827,30 @@ public class SimsekNpc extends PathfinderMob {
         if (min.isPresent() && max.isPresent()) {
             this.entityData.set(DATA_TASK_MIN, min);
             this.entityData.set(DATA_TASK_MAX, max);
-            this.entityData.set(DATA_STORAGE, NbtUtils.readBlockPos(task, TAG_TASK_STORAGE));
             setMiningRemaining(task.getInt(TAG_TASK_REMAINING));
-            setMiningStatus(MiningStatus.IDLE);
+            setTaskStatus(TaskStatus.IDLE);
         } else {
             this.entityData.set(DATA_TASK_MIN, Optional.empty());
             this.entityData.set(DATA_TASK_MAX, Optional.empty());
-            this.entityData.set(DATA_STORAGE, Optional.empty());
             setMiningRemaining(0);
-            setMiningStatus(MiningStatus.NONE);
+            setTaskStatus(TaskStatus.NONE);
+        }
+        Optional<BlockPos> storage = NbtUtils.readBlockPos(tag, TAG_STORAGE);
+        if (storage.isEmpty()) {
+            // Saves from before the hunter kept the storage inside the mining task.
+            storage = NbtUtils.readBlockPos(task, TAG_TASK_STORAGE);
+        }
+        this.entityData.set(DATA_STORAGE, storage);
+    }
+
+    private void readHuntTask(CompoundTag tag) {
+        this.entityData.set(DATA_HUNT_CENTER, NbtUtils.readBlockPos(tag, TAG_HUNT_CENTER));
+        setHuntMode(HuntMode.byName(tag.getString(TAG_HUNT_MODE)));
+        this.entityData.set(DATA_HUNT_KILLS, Math.max(0, tag.getInt(TAG_HUNT_KILLS)));
+        this.retreating = getHuntCenter() != null && tag.getBoolean(TAG_RETREATING);
+        this.pendingLootCenter = null;
+        if (getHuntCenter() != null && getTaskStatus() == TaskStatus.NONE) {
+            setTaskStatus(TaskStatus.IDLE);
         }
     }
 }
